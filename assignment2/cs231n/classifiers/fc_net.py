@@ -126,6 +126,37 @@ class TwoLayerNet(object):
         return loss, grads
 
 
+def affine_bn_relu_forward(x, w, b, gamma, beta, bn_param):
+    """
+    Convenience layer that perorms an affine transform followed by a ReLU
+
+    Inputs:
+    - x: Input to the affine layer
+    - w, b: Weights for the affine layer
+    - gamma, beta, bn_param: batch norm params
+
+    Returns a tuple of:
+    - out: Output from the ReLU
+    - cache: Object to give to the backward pass
+    """
+    a, fc_cache = affine_forward(x, w, b)
+    bn, batch_cache = batchnorm_forward(a, gamma, beta, bn_param)
+    out, relu_cache = relu_forward(bn)
+    cache = (fc_cache, batch_cache, relu_cache)
+    return out, cache
+
+
+def affine_bn_relu_backward(dout, cache):
+    """
+    Backward pass for the affine-relu convenience layer
+    """
+    fc_cache, batch_cache, relu_cache = cache
+    dbn = relu_backward(dout, relu_cache)
+    da, dgamma, dbeta = batchnorm_backward_alt(dbn, batch_cache)
+    dx, dw, db = affine_backward(da, fc_cache)
+    return dx, dw, db, dgamma, dbeta
+
+
 class FullyConnectedNet(object):
     """
     A fully-connected neural network with an arbitrary number of hidden layers,
@@ -210,6 +241,13 @@ class FullyConnectedNet(object):
         self.bn_params = []
         if self.use_batchnorm:
             self.bn_params = [{'mode': 'train'} for i in range(self.num_layers - 1)]
+            gammas = {'gamma' + str(i + 1):
+                      np.ones(dims[i + 1]) for i in range(len(dims) - 2)}
+            betas = {'beta' + str(i + 1): np.zeros(dims[i + 1])
+                     for i in range(len(dims) - 2)}
+
+            self.params.update(betas)
+            self.params.update(gammas)
 
         # Cast all parameters to the correct datatype
         for k, v in self.params.items():
@@ -251,9 +289,17 @@ class FullyConnectedNet(object):
         cache_layer = {}
 
         for i in range(1, self.num_layers):
-          layer[i], cache_layer[i] = affine_relu_forward(layer[i - 1],
-                                                         self.params['W%d' % i],
-                                                         self.params['b%d' % i])
+            if self.use_batchnorm:
+                layer[i], cache_layer[i] = affine_bn_relu_forward(layer[i - 1],
+                                                        self.params['W%d' % i],
+                                                        self.params['b%d' % i],
+                                                        self.params['gamma%d' % i],
+                                                        self.params['beta%d' % i],
+                                                        self.bn_params[i - 1])
+            else:
+                layer[i], cache_layer[i] = affine_relu_forward(layer[i - 1],
+                                                     self.params['W%d' % i],
+                                                     self.params['b%d' % i])
         # Forward into last layer
         WLast = 'W%d' % self.num_layers
         bLast = 'b%d' % self.num_layers
@@ -289,9 +335,17 @@ class FullyConnectedNet(object):
         # return 1, hidden_layers
         dx = {}
         dx[self.num_layers], grads[WLast], grads[bLast] = affine_backward(dscores, cache_scores)
-        for i in range(self.num_layers-1, 0, -1):
-            dx[i], grads['W%d' % i], grads['b%d' % i] = affine_relu_backward(dx[i + 1], cache_layer[i])
-            grads['W%d' % i] += self.reg * self.params['W%d' % i]
+        if self.use_batchnorm:
+            for i in range(self.num_layers-1, 0, -1):
+                (dx[i], grads['W%d' % i], grads['b%d' % i], 
+                    grads['gamma%d' % i], grads['beta%d' % i]) = \
+                                    affine_bn_relu_backward(dx[i + 1], cache_layer[i])
+                grads['W%d' % i] += self.reg * self.params['W%d' % i]
+        else:
+            for i in range(self.num_layers-1, 0, -1):
+                dx[i], grads['W%d' % i], grads['b%d' % i] = \
+                                    affine_relu_backward(dx[i + 1], cache_layer[i])
+                grads['W%d' % i] += self.reg * self.params['W%d' % i]
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
