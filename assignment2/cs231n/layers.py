@@ -123,8 +123,8 @@ def batchnorm_forward(x, gamma, beta, bn_param):
     At each timestep we update the running averages for mean and variance using
     an exponential decay based on the momentum parameter:
 
-    running_mean = momentum * running_mean + (1 - momentum) * sample_mean
-    running_var = momentum * running_var + (1 - momentum) * sample_var
+    running_mean = momentum * running_mean + (1 - momentum) * mu
+    running_var = momentum * running_var + (1 - momentum) * var
 
     Note that the batch normalization paper suggests a different test-time
     behavior: they compute sample mean and variance for each feature using a
@@ -173,13 +173,17 @@ def batchnorm_forward(x, gamma, beta, bn_param):
         # variance, storing your result in the running_mean and running_var   #
         # variables.                                                          #
         #######################################################################
-        sample_mean = np.mean(x, axis=0)
-        sample_var = np.var(x, axis=0)
-        x_norm = (x-sample_mean) / np.sqrt(sample_var + eps)
-        out = gamma * x + beta
-        running_mean = momentum * running_mean + (1 - momentum) * sample_mean
-        running_var = momentum * running_var + (1 - momentum) * sample_var
-        cache = (sample_mean, sample_var, gamma, beta, bn_param)
+        mu = np.mean(x, axis=0)
+        x_mu = x - mu
+        var = np.var(x_mu, axis=0)
+        sqrt_var = np.sqrt(var + eps)
+        inv_var = 1 / sqrt_var
+        x_norm = x_mu * inv_var
+        gamma_x = gamma * x_norm
+        out =  gamma_x + beta
+        running_mean = momentum * running_mean + (1 - momentum) * mu
+        running_var = momentum * running_var + (1 - momentum) * var
+        cache = (x, mu, x_mu, var, sqrt_var, inv_var, x_norm, gamma_x, gamma, beta, bn_param)
         #######################################################################
         #                           END OF YOUR CODE                          #
         #######################################################################
@@ -191,8 +195,8 @@ def batchnorm_forward(x, gamma, beta, bn_param):
         # Store the result in the out variable.                               #
         #######################################################################
         x_norm = (x - running_mean)/np.sqrt(running_var + eps)
-        out = gamma * x + beta
-        cache = (gamma, beta, bn_param)
+        out = gamma * x_norm + beta
+        cache = (x, running_mean, running_var, gamma, beta, bn_param)
         #######################################################################
         #                          END OF YOUR CODE                           #
         #######################################################################
@@ -228,7 +232,29 @@ def batchnorm_backward(dout, cache):
     # TODO: Implement the backward pass for batch normalization. Store the    #
     # results in the dx, dgamma, and dbeta variables.                         #
     ###########################################################################
-    pass
+    x, mu, x_mu, var, sqrt_var, inv_var, x_norm, gamma_x, gamma, beta, bn_param = cache
+    eps = bn_param.get('eps', 1e-5)
+    N, D = dout.shape
+
+    dgamma_x = dout
+    dbeta = np.sum(dout, axis=0)
+
+    dgamma = np.sum(dgamma_x * x_norm, axis=0)
+    dx_norm = dgamma_x * gamma
+
+    dx_mu = dx_norm * inv_var
+    dinv_var = np.sum(dx_norm * x_mu, axis=0)
+
+    dsqrt_var = dinv_var * (-1 / sqrt_var**2)
+
+    dvar = dsqrt_var * 1/2 * 1 / np.sqrt(var + eps)
+
+    dx_mu += 1 / N * 2 * x_mu * dvar
+
+    dx = dx_mu
+    dmu =- np.sum(dx_mu, axis=0)
+
+    dx += 1 / N * dmu
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
@@ -258,7 +284,15 @@ def batchnorm_backward_alt(dout, cache):
     # should be able to compute gradients with respect to the inputs in a     #
     # single statement; our implementation fits on a single 80-character line.#
     ###########################################################################
-    pass
+    x, mu, x_mu, var, sqrt_var, inv_var, x_norm, gamma_x, gamma, beta, bn_param = cache
+    eps = bn_param.get('eps', 1e-5)
+    N, D = dout.shape
+
+    dbeta = np.sum(dout, axis=0)
+    dgamma = np.sum((x - mu) / np.sqrt(var + eps) * dout, axis=0)
+    dx = (1 / N) * gamma / np.sqrt(var + eps) * \
+         (N * dout - np.sum(dout, axis=0) - (x - mu) / (var + eps)\
+          * np.sum(dout * (x - mu), axis=0))
     ###########################################################################
     #                             END OF YOUR CODE                            #
     ###########################################################################
