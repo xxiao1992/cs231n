@@ -142,12 +142,17 @@ class CaptioningRNN(object):
         embed, embed_cache = word_embedding_forward(captions_in, W_embed)
         if self.cell_type == "rnn":
             h, h_cache = rnn_forward(embed, h0, Wx, Wh, b)
+        elif self.cell_type == "lstm":
+            h, h_cache = lstm_forward(embed, h0, Wx, Wh, b)
         scores, scores_cache = temporal_affine_forward(h, W_vocab, b_vocab)
         loss, dscores = temporal_softmax_loss(scores, captions_out, mask)
 
         # backward propagation
         dh, dW_vocab, db_vocab = temporal_affine_backward(dscores, scores_cache)
-        dembed, dh0, dWx, dWh, db = rnn_backward(dh, h_cache)
+        if self.cell_type == "rnn":
+            dembed, dh0, dWx, dWh, db = rnn_backward(dh, h_cache)
+        elif self.cell_type == "lstm":
+            dembed, dh0, dWx, dWh, db = lstm_backward(dh, h_cache)
         dW_embed = word_embedding_backward(dembed, embed_cache)
         dW_proj = np.dot(features.T, dh0)
         db_proj = np.sum(dh0, axis=0)
@@ -220,7 +225,30 @@ class CaptioningRNN(object):
         # functions; you'll need to call rnn_step_forward or lstm_step_forward in #
         # a loop.                                                                 #
         ###########################################################################
-        pass
+        h0 = np.dot(features, W_proj) + b_proj
+        captions[:, 0] = self._start
+
+        prev_h = h0
+        prev_c = np.zeros_like(h0)
+
+        capt = self._start * np.ones((N, 1), dtype=np.int32)
+
+        for t in range(max_length):
+            embed, _ = word_embedding_forward(capt, W_embed)
+            embed = np.squeeze(embed)
+            if self.cell_type == 'rnn':
+                next_h, _ = rnn_step_forward(embed, prev_h, Wx, Wh, b)
+            elif self.cell_type == 'lstm':
+                next_h, next_c, _ = lstm_step_forward(embed, prev_h, prev_c, Wx, Wh, b)
+            scores, _ = temporal_affine_forward(next_h[:, np.newaxis, :], W_vocab, b_vocab)
+            
+            idx_best = np.argmax(scores, axis=2)
+            captions[:, t] = np.squeeze(idx_best)
+            capt = idx_best
+
+            prev_h = next_h
+            if self.cell_type == 'lstm':
+                prev_c = next_c
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
