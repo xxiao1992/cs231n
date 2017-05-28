@@ -119,7 +119,7 @@ class CaptioningRNN(object):
         ############################################################################
         # TODO: Implement the forward and backward passes for the CaptioningRNN.   #
         # In the forward pass you will need to do the following:                   #
-        # (1) Use an affine transformation to compute the initial hidden state     #
+        # (1) Use an  transformation to compute the initial hidden state     #
         #     from the image features. This should produce an array of shape (N, H)#
         # (2) Use a word embedding layer to transform the words in captions_in     #
         #     from indices to vectors, giving an array of shape (N, T, W).         #
@@ -137,13 +137,34 @@ class CaptioningRNN(object):
         # defined above to store loss and gradients; grads[k] should give the      #
         # gradients for self.params[k].                                            #
         ############################################################################
-        pass
+        # forward pass
+        h0 = np.dot(features, W_proj) + b_proj
+        embed, embed_cache = word_embedding_forward(captions_in, W_embed)
+        if self.cell_type == "rnn":
+            h, h_cache = rnn_forward(embed, h0, Wx, Wh, b)
+        scores, scores_cache = temporal_affine_forward(h, W_vocab, b_vocab)
+        loss, dscores = temporal_softmax_loss(scores, captions_out, mask)
+
+        # backward propagation
+        dh, dW_vocab, db_vocab = temporal_affine_backward(dscores, scores_cache)
+        dembed, dh0, dWx, dWh, db = rnn_backward(dh, h_cache)
+        dW_embed = word_embedding_backward(dembed, embed_cache)
+        dW_proj = np.dot(features.T, dh0)
+        db_proj = np.sum(dh0, axis=0)
+
+        grads['W_embed'] = dW_embed
+        grads['W_proj'] = dW_proj
+        grads['b_proj'] = db_proj
+        grads['Wx'] = dWx
+        grads['Wh'] = dWh
+        grads['b'] = db
+        grads['W_vocab'] = dW_vocab
+        grads['b_vocab'] = db_vocab
         ############################################################################
         #                             END OF YOUR CODE                             #
         ############################################################################
 
         return loss, grads
-
 
     def sample(self, features, max_length=30):
         """
